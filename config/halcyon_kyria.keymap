@@ -1,0 +1,138 @@
+/*
+ * Copyright (c) 2023 The ZMK Contributors
+ * Copyright (c) 2026 Splitkb.com
+ *
+ * SPDX-License-Identifier: MIT
+ */
+
+#include <behaviors.dtsi>
+#include <dt-bindings/zmk/bt.h>
+#include <dt-bindings/zmk/keys.h>
+#include <dt-bindings/zmk/rgb.h>
+#include <dt-bindings/zmk/ext_power.h>
+
+#define BASE_LNX  0
+#define RAISE_LNX 1
+#define LOWER_LNX 2
+#define BASE_MOS  3
+#define RAISE_MOS 4
+#define LOWER_MOS 5
+
+/ {
+    keymap {
+        compatible = "zmk,keymap";
+
+        base_linux_layer {
+            display-name = "Linux Default";
+// ---------------------------------------------------------------------------------------------------------------
+// |  TAB  |   Q   |   W   |   F   |   P   |  B   |                                       |  J   |   L   |   U   |   Y   |   ;   |  '   |
+// |  ESC  | LG(A) | LA(R) | LC(S) | LS(T) |  G   |                                       |  M   | RS(N) | RC(E) | LA(I) | RG(O) | BKSP |
+// |  SHFT |   Z   |   X   |   C   |   D   |  V   |     [     | DEL |   | DEL |     ]     |  K   |   H   |   ,   |   .   |   /   | SHFT |
+//                         |       |       | RALT | RAISE_LNX | ENT |   | SPC | LOWER_LNX | RALT |       |       |
+            bindings = <
+&kp TAB       &kp Q      &kp W      &kp F       &kp P        &kp B                                                        &kp J    &kp L        &kp U       &kp Y      &kp SEMI   &mt RCTRL SQT
+&kp ESC       &mt LGUI A &mt LALT R &mt LCTRL S &mt LSHIFT T &kp G                                                        &kp M    &mt RSHIFT N &mt RCTRL E &mt LALT I &mt RGUI O &kp BSPC
+&kp LSHFT     &kp Z      &kp X      &kp C       &kp D        &kp V    &kp LBKT      &kp DEL       &kp DEL   &kp RBKT      &kp K    &kp H        &kp COMMA   &kp DOT    &kp FSLH   &kp RSHFT
+                                    &none       &none        &kp RALT &mo RAISE_LNX &kp RET       &kp SPACE &mo LOWER_LNX &kp RALT &none        &none
+// Encoder press buttons
+&kp K_MUTE &none &none &none &none                                                                                                                        &none &none &none &none &none
+
+            >;
+            sensor-bindings = <&inc_dec_kp C_VOL_UP C_VOL_DN &inc_dec_kp PG_UP PG_DN &inc_dec_kp C_VOL_UP C_VOL_DN &inc_dec_kp PG_UP PG_DN>;
+        };
+
+
+        raise_linux_layer {
+            display-name = "Linux Raise";
+// ------------------------------------------------------------------------------------------------------------
+// | F1 | F2 | F3 | F4 |  F5   |  F6   |                            |  6   |   7   |   8  |  9   | 0 | \ |
+// |    |    | +  | =  |   _   |   -   |                            |      |       |      |      |   |   |
+// |    |    |    |    | PG_DN | PG_UP |   |   |          |     |   | PREV | PAUSE | PLAY | NEXT |   |   |
+//                |    |       |       |   |   |          | DEL |   |      |       |      |
+            bindings = <
+&kp F1 &kp F2 &kp F3   &kp F4    &kp F5    &kp F6                                       &kp N6     &kp N7      &kp N8           &kp N9     &kp N0 &kp BSLH
+&none  &none  &kp PLUS &kp EQUAL &kp UNDER &kp MINUS                                    &none      &none       &none            &none      &none  &none
+&none  &none  &none    &none     &kp PG_DN &kp PG_UP &none  &none         &none   &none &kp K_PREV &kp C_PAUSE &kp K_PLAY_PAUSE &kp K_NEXT &none  &none
+                       &none     &none     &none     &trans &none         &kp DEL &none &none      &none       &none
+
+&trans &trans &trans &trans &trans                                                                                    &trans &trans &trans &trans &trans
+            >;
+            sensor-bindings = <&inc_dec_kp PG_UP PG_DN &inc_dec_kp PG_UP PG_DN &inc_dec_kp C_VOL_UP C_VOL_DN &inc_dec_kp PG_UP PG_DN>;
+        };
+
+        lower_linux_layer {
+            display-name = "Linux Lower";
+// -----------------------------------------------------------------------------------------------------
+// |  `  |  1  |  2  |  3  |  4  |  5  |                                   |  F7  |  F8  |  F9  |  F10  | F11 | F12 |
+// |     |     |     |  {  |  }  |  (  |                                   | LEFT | DOWN |  UP  | RIGHT |     |     |
+// |     |     |     |  [  |  ]  |  )  |      | BASE_MOS |         |   |   |      |      |      |       |     |     |
+//                   |     |     |     | HOME | END      |         |   |   |      |      |      |
+            bindings = <
+&kp GRAVE &kp N1 &kp N2 &kp N3   &kp N4   &kp N5                                         &kp F7   &kp F8    &kp F9  &kp F10   &kp F11  &kp F12
+&none     &none  &none  &kp LBRC &kp RBRC &kp LPAR                                       &kp LEFT &kp DOWN  &kp UP  &kp RIGHT &none    &none
+&none     &none  &none  &kp LBKT &kp RBKT &kp RPAR &none    &none                 &none  &none  &none    &none     &none   &none     &none    &none
+                        &none    &none    &none    &kp HOME &kp  END              &none  &trans &none    &none     &none
+
+&trans &trans &trans &trans &trans                                                                         &trans &trans &trans &trans &trans
+            >;
+            sensor-bindings = <&inc_dec_kp PG_UP PG_DN &inc_dec_kp PG_UP PG_DN &inc_dec_kp C_VOL_UP C_VOL_DN &inc_dec_kp PG_UP PG_DN>;
+        };
+
+//&none     &none  &none  &kp LBKT &kp RBKT &kp RPAR &none    &tog BASE_MOS         &none  &none  &none    &none     &none   &none     &none    &none
+//        base_macos_layer {
+//            display-name = "MacOS Default";
+//// ---------------------------------------------------------------------------------------------------------------
+//// |  TAB  |   Q   |   W   |   F   |   P   |  B   |                                       |  J   |   L   |   U   |   Y   |   ;   |  '   |
+//// |  ESC  | LC(A) | LA(R) | LG(S) | LS(T) |  G   |                                       |  M   | RS(N) | RG(E) | LA(I) | RC(O) | BKSP |
+//// |  SHFT |   Z   |   X   |   C   |   D   |  V   |     [     | DEL |   | DEL |     ]     |  K   |   H   |   ,   |   .   |   /   | SHFT |
+////                         |       |       | RALT | RAISE_MOS | ENT |   | SPC | LOWER_MOS | RALT |       |       |
+//            bindings = <
+//&kp TAB       &kp Q      &kp W      &kp F       &kp P        &kp B                                                        &kp J    &kp L        &kp U       &kp Y      &kp SEMI   &mt RCTRL SQT
+//&kp ESC       &mt LGUI A &mt LALT R &mt LCTRL S &mt LSHIFT T &kp G                                                        &kp M    &mt RSHIFT N &mt RCTRL E &mt LALT I &mt RGUI O &kp BSPC
+//&kp LSHFT     &kp Z      &kp X      &kp C       &kp D        &kp V    &kp LBKT      &kp DEL       &kp DEL   &kp RBKT      &kp K    &kp H        &kp COMMA   &kp DOT    &kp FSLH   &kp RSHFT
+//                                    &none       &none        &kp RALT &mo RAISE_MOS &kp RET       &kp SPACE &mo LOWER_MOS &kp RALT &none        &none
+//// Encoder press buttons
+//&kp K_MUTE &none &none &none &none                                                                                                                        &none &none &none &none &none
+//
+//            >;
+//            sensor-bindings = <&inc_dec_kp C_VOL_UP C_VOL_DN &inc_dec_kp PG_UP PG_DN &inc_dec_kp C_VOL_UP C_VOL_DN &inc_dec_kp PG_UP PG_DN>;
+//        };
+//
+//
+//        raise_macos_layer {
+//            display-name = "MacOS Raise";
+//// ------------------------------------------------------------------------------------------------------------
+//// | F1 | F2 | F3 | F4 |  F5   |  F6   |                            |  6   |   7   |   8  |  9   | 0 | \ |
+//// |    |    | +  | =  |   _   |   -   |                            |      |       |      |      |   |   |
+//// |    |    |    |    | PG_DN | PG_UP |   |   |          |     |   | PREV | PAUSE | PLAY | NEXT |   |   |
+////                |    |       |       |   |   |          | DEL |   |      |       |      |
+//            bindings = <
+//&kp F1 &kp F2 &kp F3   &kp F4    &kp F5    &kp F6                                       &kp N6     &kp N7      &kp N8           &kp N9     &kp N0 &kp BSLH
+//&none  &none  &kp PLUS &kp EQUAL &kp UNDER &kp MINUS                                    &none      &none       &none            &none      &none  &none
+//&none  &none  &none    &none     &kp PG_DN &kp PG_UP &none  &none         &none   &none &kp K_PREV &kp C_PAUSE &kp K_PLAY_PAUSE &kp K_NEXT &none  &none
+//                       &none     &none     &none     &trans &none         &kp DEL &none &none      &none       &none
+//
+//&trans &trans &trans &trans &trans                                                                                    &trans &trans &trans &trans &trans
+//            >;
+//            sensor-bindings = <&inc_dec_kp PG_UP PG_DN &inc_dec_kp PG_UP PG_DN &inc_dec_kp C_VOL_UP C_VOL_DN &inc_dec_kp PG_UP PG_DN>;
+//        };
+//
+//        lower_macos_layer {
+//            display-name = "MacOS Lower";
+//// -----------------------------------------------------------------------------------------------------
+//// |  `  |  1  |  2  |  3  |  4  |  5  |                              |  F7  |  F8  |  F9  |  F10  | F11 | F12 |
+//// |     |     |     |  {  |  }  |  (  |                              | LEFT | DOWN |  UP  | RIGHT |     |     |
+//// |     |     |     |  [  |  ]  |  )  |      |     |         |   |   |      |      |      |       |     |     |
+////                   |     |     |     | HOME | END |         |   |   |      |      |      |
+//            bindings = <
+//&kp GRAVE &kp N1 &kp N2 &kp N3   &kp N4   &kp N5                                                          &kp F7   &kp F8    &kp F9  &kp F10   &kp F11  &kp F12
+//&none     &none  &none  &kp LBRC &kp RBRC &kp LPAR                                                        &kp LEFT &kp DOWN  &kp UP  &kp RIGHT &none    &none
+//&none     &none  &none  &kp LBKT &kp RBKT &kp RPAR &none        &tog BASE_LNX               &none  &none  &none    &none     &none   &none     &none    &none
+//                        &none    &none    &none    &mt LG(LEFT) &mt LG(RIGHT)               &none  &trans &none    &none     &none
+//
+//&trans &trans &trans &trans &trans                                                                         &trans &trans &trans &trans &trans
+//            >;
+//            sensor-bindings = <&inc_dec_kp PG_UP PG_DN &inc_dec_kp PG_UP PG_DN &inc_dec_kp C_VOL_UP C_VOL_DN &inc_dec_kp PG_UP PG_DN>;
+//        };
+    };
+};
