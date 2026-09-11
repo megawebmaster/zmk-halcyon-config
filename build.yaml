@@ -19,8 +19,6 @@
 include:
   - board: halcyon_dongle//zmk
     shield: halcyon_kyria_dongle
-    cmake-args: -DCONFIG_ZMK_STUDIO=y
-    snippet: studio-rpc-usb-uart
   - board: halcyon_wireless//zmk
     shield: halcyon_kyria_left mod_battery_lipo mod_display_epaper_forest
     cmake-args: -DCONFIG_ZMK_SPLIT_ROLE_CENTRAL=n
