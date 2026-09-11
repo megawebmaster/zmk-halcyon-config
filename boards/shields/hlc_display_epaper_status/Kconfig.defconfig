@@ -1,0 +1,63 @@
+# Copyright (c) 2026 Splitkb.com
+# SPDX-License-Identifier: MIT
+
+if SHIELD_HLC_DISPLAY_EPAPER_STATUS
+
+config LV_Z_VDB_SIZE
+    default 100
+
+config LV_DPI_DEF
+    default 130
+
+config LV_Z_BITS_PER_PIXEL
+    default 1
+
+choice LV_COLOR_DEPTH
+    default LV_COLOR_DEPTH_1
+endchoice
+
+choice ZMK_DISPLAY_WORK_QUEUE
+    default ZMK_DISPLAY_WORK_QUEUE_DEDICATED
+endchoice
+
+choice ZMK_DISPLAY_STATUS_SCREEN
+    default ZMK_DISPLAY_STATUS_SCREEN_CUSTOM
+endchoice
+
+config ZMK_DISPLAY
+    select LV_USE_CONT
+
+config HEAP_MEM_POOL_SIZE
+    default 1024
+
+config LV_Z_MEM_POOL_SIZE
+    default 8192
+
+config ZMK_DISPLAY_STATUS_SCREEN_CUSTOM
+    imply HLC_EPAPER_WIDGET_STATUS
+
+config HLC_EPAPER_WIDGET_STATUS
+    bool "Halcyon epaper status widget with layer, batteries and WPM"
+    select LV_FONT_MONTSERRAT_16
+    # The layer number is drawn at the largest built-in Montserrat size. A true 4x of
+    # the 14px upstream layer text would be 56, which LVGL does not ship.
+    select LV_FONT_MONTSERRAT_48
+    select LV_USE_IMAGE
+    select LV_USE_CANVAS
+
+config HLC_EPAPER_WIDGET_INVERTED
+    bool "Invert custom status widget colors"
+
+if !ZMK_SPLIT || ZMK_SPLIT_ROLE_CENTRAL
+
+# WPM is computed from keypress events, so it only exists on a central. A peripheral
+# receives it over the split link instead.
+config HLC_EPAPER_WIDGET_STATUS
+    select ZMK_WPM
+
+endif # !ZMK_SPLIT || ZMK_SPLIT_ROLE_CENTRAL
+
+config ZMK_DISPLAY_STATUS_SCREEN_BUILT_IN
+    select LV_FONT_MONTSERRAT_26
+
+endif # SHIELD_HLC_DISPLAY_EPAPER_STATUS

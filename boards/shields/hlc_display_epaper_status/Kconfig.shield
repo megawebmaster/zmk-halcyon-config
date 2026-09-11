@@ -1,0 +1,5 @@
+# Copyright (c) 2026 Splitkb.com
+# SPDX-License-Identifier: MIT
+
+config SHIELD_HLC_DISPLAY_EPAPER_STATUS
+    def_bool $(shields_list_contains,hlc_display_epaper_status)

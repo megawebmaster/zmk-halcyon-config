@@ -19,8 +19,11 @@
 include:
   - board: halcyon_dongle//zmk
     shield: halcyon_kyria_dongle
+    # The display lives on a peripheral, so the central has to fetch peripheral battery
+    # levels and compute WPM for it to have anything to forward.
+    cmake-args: -DCONFIG_ZMK_SPLIT_BLE_CENTRAL_BATTERY_LEVEL_FETCHING=y -DCONFIG_ZMK_WPM=y
   - board: halcyon_wireless//zmk
-    shield: halcyon_kyria_left mod_battery_lipo mod_display_epaper_forest
+    shield: halcyon_kyria_left mod_battery_lipo hlc_display_epaper_status
     cmake-args: -DCONFIG_ZMK_SPLIT_ROLE_CENTRAL=n
   - board: halcyon_wireless//zmk
     shield: halcyon_kyria_right mod_battery_lipo mod_encoder_right

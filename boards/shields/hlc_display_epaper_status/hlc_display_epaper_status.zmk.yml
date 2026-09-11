@@ -1,0 +1,7 @@
+file_format: "1"
+id: hlc_display_epaper_status
+name: Halcyon ePaper Status Display
+type: shield
+requires: [vik]
+features:
+  - display

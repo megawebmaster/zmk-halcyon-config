@@ -2,12 +2,17 @@ manifest:
   remotes:
     - name: splitkb
       url-base: https://github.com/splitkb
+    # Fork of splitkb/zmk carrying the central-to-peripheral status forwarding the
+    # hlc_display_epaper_status shield needs. Rebase onto main+halcyon-fixes when
+    # splitkb moves.
+    - name: megawebmaster
+      url-base: https://github.com/megawebmaster
     # Additional modules containing boards/shields/custom code can be listed here as well
     # See https://docs.zephyrproject.org/3.2.0/develop/west/manifest.html#projects
   projects:
     - name: zmk
-      remote: splitkb
-      revision: main+halcyon-fixes
+      remote: megawebmaster
+      revision: halcyon-split-status
       import: app/west.yml
     - name: zmk-halcyon-module
       remote: splitkb

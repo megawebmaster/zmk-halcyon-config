@@ -1,0 +1,592 @@
+From 9e200920c84b862bba60c4e715be63e4784ed16d Mon Sep 17 00:00:00 2001
+From: Amadeusz Starzykiewicz <megawebmaster@gmail.com>
+Date: Fri, 11 Sep 2026 12:37:05 +0200
+Subject: [PATCH] feat(split): forward central status to peripherals
+
+Adds a SET_PERIPHERAL_STATUS central command carrying the active layer, the
+peripheral battery levels, the selected endpoint and BLE profile state, and WPM,
+so a peripheral carrying a display can render them. Previously the only payload
+travelling central to peripheral was the HID indicator state, which left a
+display-carrying peripheral with no way to show anything beyond its own battery.
+
+Layer and endpoint changes are broadcast immediately; battery levels and WPM ride
+a periodic tick (CONFIG_ZMK_SPLIT_PERIPHERAL_STATUS_INTERVAL_S, default 60s) to
+avoid a BLE write per second. A broadcast is also triggered when a peripheral's
+characteristics are discovered, so a peripheral that reboots does not wait out the
+interval with stale data.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Cr1KsAvQhNX7c2DwkXyu8j
+---
+ app/CMakeLists.txt                            |   1 +
+ .../split_peripheral_status_data_changed.h    |  27 ++++
+ app/include/zmk/split/bluetooth/uuid.h        |   1 +
+ app/include/zmk/split/central.h               |   8 ++
+ app/include/zmk/split/transport/types.h       |  26 ++++
+ .../split_peripheral_status_data_changed.c    |  10 ++
+ app/src/split/Kconfig                         |  23 ++++
+ app/src/split/bluetooth/central.c             |  55 +++++++++
+ app/src/split/bluetooth/service.c             |  45 +++++++
+ app/src/split/central.c                       | 116 ++++++++++++++++++
+ app/src/split/peripheral.c                    |  19 +++
+ app/src/split/wired/central.c                 |   2 +
+ 12 files changed, 333 insertions(+)
+ create mode 100644 app/include/zmk/events/split_peripheral_status_data_changed.h
+ create mode 100644 app/src/events/split_peripheral_status_data_changed.c
+
+diff --git a/app/CMakeLists.txt b/app/CMakeLists.txt
+index c41153cb..4b610500 100644
+--- a/app/CMakeLists.txt
++++ b/app/CMakeLists.txt
+@@ -98,6 +98,7 @@ target_sources_ifdef(CONFIG_ZMK_HID_INDICATORS app PRIVATE src/events/hid_indica
+ add_subdirectory_ifdef(CONFIG_ZMK_HID_INDICATORS src/indicators)
+ 
+ target_sources_ifdef(CONFIG_ZMK_SPLIT app PRIVATE src/events/split_peripheral_status_changed.c)
++target_sources_ifdef(CONFIG_ZMK_SPLIT_PERIPHERAL_STATUS_REPORTING app PRIVATE src/events/split_peripheral_status_data_changed.c)
+ add_subdirectory_ifdef(CONFIG_ZMK_SPLIT src/split)
+ 
+ target_sources_ifdef(CONFIG_USB_DEVICE_STACK app PRIVATE src/usb.c)
+diff --git a/app/include/zmk/events/split_peripheral_status_data_changed.h b/app/include/zmk/events/split_peripheral_status_data_changed.h
+new file mode 100644
+index 00000000..ea46566a
+--- /dev/null
++++ b/app/include/zmk/events/split_peripheral_status_data_changed.h
+@@ -0,0 +1,27 @@
++/*
++ * Copyright (c) 2025 The ZMK Contributors
++ *
++ * SPDX-License-Identifier: MIT
++ */
++
++#pragma once
++
++#include <zephyr/kernel.h>
++#include <zmk/event_manager.h>
++#include <zmk/split/transport/types.h>
++
++// Status forwarded from the central to a peripheral. Raised on the peripheral when a
++// ZMK_SPLIT_TRANSPORT_CENTRAL_CMD_TYPE_SET_PERIPHERAL_STATUS command arrives.
++struct zmk_split_peripheral_status_data_changed {
++    // This peripheral's own source index, so it can tell its own entry in
++    // battery_levels apart from the other peripherals'.
++    uint8_t source;
++    uint8_t layer_index;
++    uint8_t battery_levels[ZMK_SPLIT_STATUS_MAX_PERIPHERALS];
++    uint8_t endpoint_transport;
++    uint8_t active_profile_index;
++    uint8_t profile_flags;
++    uint8_t wpm;
++};
++
++ZMK_EVENT_DECLARE(zmk_split_peripheral_status_data_changed);
+diff --git a/app/include/zmk/split/bluetooth/uuid.h b/app/include/zmk/split/bluetooth/uuid.h
+index c9a63efa..f7712441 100644
+--- a/app/include/zmk/split/bluetooth/uuid.h
++++ b/app/include/zmk/split/bluetooth/uuid.h
+@@ -20,3 +20,4 @@
+ #define ZMK_SPLIT_BT_UPDATE_HID_INDICATORS_UUID ZMK_BT_SPLIT_UUID(0x00000004)
+ #define ZMK_SPLIT_BT_SELECT_PHYS_LAYOUT_UUID ZMK_BT_SPLIT_UUID(0x00000005)
+ #define ZMK_SPLIT_BT_INPUT_EVENT_UUID ZMK_BT_SPLIT_UUID(0x00000006)
++#define ZMK_SPLIT_BT_PERIPHERAL_STATUS_UUID ZMK_BT_SPLIT_UUID(0x00000007)
+diff --git a/app/include/zmk/split/central.h b/app/include/zmk/split/central.h
+index ff971bfc..c083e16e 100644
+--- a/app/include/zmk/split/central.h
++++ b/app/include/zmk/split/central.h
+@@ -41,6 +41,14 @@ int zmk_split_central_update_hid_indicator(zmk_hid_indicators_t indicators);
+ 
+ #endif // IS_ENABLED(CONFIG_ZMK_SPLIT_PERIPHERAL_HID_INDICATORS)
+ 
++#if IS_ENABLED(CONFIG_ZMK_SPLIT_PERIPHERAL_STATUS_REPORTING)
++
++// Push the central's current status (layer, peripheral battery levels, endpoint and BLE
++// profile state, WPM) to every connected peripheral.
++int zmk_split_central_broadcast_peripheral_status(void);
++
++#endif // IS_ENABLED(CONFIG_ZMK_SPLIT_PERIPHERAL_STATUS_REPORTING)
++
+ #if IS_ENABLED(CONFIG_ZMK_SPLIT_BLE_CENTRAL_BATTERY_LEVEL_FETCHING)
+ 
+ int zmk_split_central_get_peripheral_battery_level(uint8_t source, uint8_t *level);
+diff --git a/app/include/zmk/split/transport/types.h b/app/include/zmk/split/transport/types.h
+index 1d6eb734..22215a17 100644
+--- a/app/include/zmk/split/transport/types.h
++++ b/app/include/zmk/split/transport/types.h
+@@ -10,6 +10,15 @@
+ #include <zmk/sensors.h>
+ #include <zephyr/sys/util.h>
+ 
++// Fixed, config-independent size for the peripheral status payload. Central and
++// peripheral are built separately and the peripheral never defines
++// CONFIG_ZMK_SPLIT_BLE_CENTRAL_PERIPHERALS, so a config-dependent array length here
++// would desync the wire format between the two images.
++#define ZMK_SPLIT_STATUS_MAX_PERIPHERALS 4
++
++#define ZMK_SPLIT_STATUS_PROFILE_CONNECTED BIT(0)
++#define ZMK_SPLIT_STATUS_PROFILE_BONDED BIT(1)
++
+ enum zmk_split_transport_connections_status {
+     ZMK_SPLIT_TRANSPORT_CONNECTIONS_STATUS_DISCONNECTED = 0,
+     ZMK_SPLIT_TRANSPORT_CONNECTIONS_STATUS_SOME_CONNECTED,
+@@ -61,11 +70,26 @@ struct zmk_split_transport_peripheral_event {
+     } data;
+ } __packed;
+ 
++struct zmk_split_peripheral_status_payload {
++    // The recipient's own source index, so it can tell its own entry in battery_levels
++    // apart from the other peripherals'.
++    uint8_t source;
++    uint8_t layer_index;
++    uint8_t battery_levels[ZMK_SPLIT_STATUS_MAX_PERIPHERALS];
++    uint8_t endpoint_transport;
++    uint8_t active_profile_index;
++    uint8_t profile_flags;
++    uint8_t wpm;
++} __packed;
++
+ enum zmk_split_transport_central_command_type {
+     ZMK_SPLIT_TRANSPORT_CENTRAL_CMD_TYPE_POLL_EVENTS,
+     ZMK_SPLIT_TRANSPORT_CENTRAL_CMD_TYPE_INVOKE_BEHAVIOR,
+     ZMK_SPLIT_TRANSPORT_CENTRAL_CMD_TYPE_SET_PHYSICAL_LAYOUT,
+     ZMK_SPLIT_TRANSPORT_CENTRAL_CMD_TYPE_SET_HID_INDICATORS,
++    // New types must be appended here: the enum is packed and sent over the wire, so
++    // inserting a value renumbers the ones after it and breaks mixed-version splits.
++    ZMK_SPLIT_TRANSPORT_CENTRAL_CMD_TYPE_SET_PERIPHERAL_STATUS,
+ } __packed;
+ 
+ struct zmk_split_transport_central_command {
+@@ -87,5 +111,7 @@ struct zmk_split_transport_central_command {
+         struct {
+             zmk_hid_indicators_t indicators;
+         } set_hid_indicators;
++
++        struct zmk_split_peripheral_status_payload set_peripheral_status;
+     } data;
+ } __packed;
+\ No newline at end of file
+diff --git a/app/src/events/split_peripheral_status_data_changed.c b/app/src/events/split_peripheral_status_data_changed.c
+new file mode 100644
+index 00000000..8aa63ca3
+--- /dev/null
++++ b/app/src/events/split_peripheral_status_data_changed.c
+@@ -0,0 +1,10 @@
++/*
++ * Copyright (c) 2025 The ZMK Contributors
++ *
++ * SPDX-License-Identifier: MIT
++ */
++
++#include <zephyr/kernel.h>
++#include <zmk/events/split_peripheral_status_data_changed.h>
++
++ZMK_EVENT_IMPL(zmk_split_peripheral_status_data_changed);
+diff --git a/app/src/split/Kconfig b/app/src/split/Kconfig
+index 00ce0840..5b2d043e 100644
+--- a/app/src/split/Kconfig
++++ b/app/src/split/Kconfig
+@@ -30,6 +30,29 @@ config ZMK_SPLIT_PERIPHERAL_HID_INDICATORS
+     help
+       Enable propagating the HID (LED) Indicator state to the split peripheral(s).
+ 
++config ZMK_SPLIT_PERIPHERAL_STATUS_REPORTING
++    bool "Peripheral Status Reporting"
++    default y
++    select ZMK_LOW_PRIORITY_WORK_QUEUE if ZMK_SPLIT_ROLE_CENTRAL
++    help
++      Enable propagating the central's status (active layer, peripheral battery levels,
++      selected endpoint and BLE profile state, WPM) to the split peripheral(s), so a
++      peripheral carrying a display can show it.
++
++      Defaulted on for any split build: the central image may not include the shield
++      that wants the data, so it cannot be selected from the display shield's Kconfig.
++
++if ZMK_SPLIT_PERIPHERAL_STATUS_REPORTING
++
++config ZMK_SPLIT_PERIPHERAL_STATUS_INTERVAL_S
++    int "Seconds between periodic peripheral status broadcasts"
++    default 60
++    help
++      Layer and endpoint changes are sent immediately. Battery levels and WPM ride this
++      periodic tick instead, to avoid one BLE write (and one ePaper refresh) per second.
++
++endif # ZMK_SPLIT_PERIPHERAL_STATUS_REPORTING
++
+ endif # ZMK_SPLIT
+ 
+ rsource "bluetooth/Kconfig"
+diff --git a/app/src/split/bluetooth/central.c b/app/src/split/bluetooth/central.c
+index b4b61ce7..85527cbc 100644
+--- a/app/src/split/bluetooth/central.c
++++ b/app/src/split/bluetooth/central.c
+@@ -33,6 +33,9 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
+ #include <zmk/pointing/input_split.h>
+ #include <zmk/hid_indicators_types.h>
+ #include <zmk/physical_layouts.h>
++#if IS_ENABLED(CONFIG_ZMK_SPLIT_PERIPHERAL_STATUS_REPORTING)
++#include <zmk/split/central.h>
++#endif
+ 
+ static int start_scanning(void);
+ 
+@@ -59,11 +62,24 @@ struct peripheral_slot {
+ #if IS_ENABLED(CONFIG_ZMK_SPLIT_PERIPHERAL_HID_INDICATORS)
+     uint16_t update_hid_indicators;
+ #endif // IS_ENABLED(CONFIG_ZMK_SPLIT_PERIPHERAL_HID_INDICATORS)
++#if IS_ENABLED(CONFIG_ZMK_SPLIT_PERIPHERAL_STATUS_REPORTING)
++    uint16_t peripheral_status_handle;
++#endif // IS_ENABLED(CONFIG_ZMK_SPLIT_PERIPHERAL_STATUS_REPORTING)
+     uint16_t selected_physical_layout_handle;
+     uint8_t position_state[POSITION_STATE_DATA_LEN];
+     uint8_t changed_positions[POSITION_STATE_DATA_LEN];
+ };
+ 
++#if IS_ENABLED(CONFIG_ZMK_SPLIT_PERIPHERAL_STATUS_REPORTING)
++
++static void broadcast_peripheral_status_cb(struct k_work *work) {
++    zmk_split_central_broadcast_peripheral_status();
++}
++
++static K_WORK_DEFINE(broadcast_peripheral_status_work, broadcast_peripheral_status_cb);
++
++#endif // IS_ENABLED(CONFIG_ZMK_SPLIT_PERIPHERAL_STATUS_REPORTING)
++
+ #if IS_ENABLED(CONFIG_ZMK_INPUT_SPLIT)
+ 
+ static const struct bt_uuid *gatt_ccc_uuid = BT_UUID_GATT_CCC;
+@@ -219,6 +235,9 @@ int release_peripheral_slot(int index) {
+ #if IS_ENABLED(CONFIG_ZMK_SPLIT_PERIPHERAL_HID_INDICATORS)
+     slot->update_hid_indicators = 0;
+ #endif // IS_ENABLED(CONFIG_ZMK_SPLIT_PERIPHERAL_HID_INDICATORS)
++#if IS_ENABLED(CONFIG_ZMK_SPLIT_PERIPHERAL_STATUS_REPORTING)
++    slot->peripheral_status_handle = 0;
++#endif // IS_ENABLED(CONFIG_ZMK_SPLIT_PERIPHERAL_STATUS_REPORTING)
+ 
+     return 0;
+ }
+@@ -620,6 +639,15 @@ static uint8_t split_central_chrc_discovery_func(struct bt_conn *conn,
+             LOG_DBG("Found update HID indicators handle");
+             slot->update_hid_indicators = bt_gatt_attr_value_handle(attr);
+ #endif // IS_ENABLED(CONFIG_ZMK_SPLIT_PERIPHERAL_HID_INDICATORS)
++#if IS_ENABLED(CONFIG_ZMK_SPLIT_PERIPHERAL_STATUS_REPORTING)
++        } else if (!bt_uuid_cmp(((struct bt_gatt_chrc *)attr->user_data)->uuid,
++                                BT_UUID_DECLARE_128(ZMK_SPLIT_BT_PERIPHERAL_STATUS_UUID))) {
++            LOG_DBG("Found peripheral status handle");
++            slot->peripheral_status_handle = bt_gatt_attr_value_handle(attr);
++            // A peripheral that just (re)connected has no status yet, and the periodic
++            // broadcast may be up to a minute away.
++            k_work_submit(&broadcast_peripheral_status_work);
++#endif // IS_ENABLED(CONFIG_ZMK_SPLIT_PERIPHERAL_STATUS_REPORTING)
+ #if IS_ENABLED(CONFIG_ZMK_SPLIT_BLE_CENTRAL_BATTERY_LEVEL_FETCHING)
+         } else if (!bt_uuid_cmp(((struct bt_gatt_chrc *)attr->user_data)->uuid,
+                                 BT_UUID_BAS_BATTERY_LEVEL)) {
+@@ -695,6 +723,9 @@ static uint8_t split_central_chrc_discovery_func(struct bt_conn *conn,
+ #if IS_ENABLED(CONFIG_ZMK_SPLIT_PERIPHERAL_HID_INDICATORS)
+     subscribed = subscribed && slot->update_hid_indicators;
+ #endif // IS_ENABLED(CONFIG_ZMK_SPLIT_PERIPHERAL_HID_INDICATORS)
++#if IS_ENABLED(CONFIG_ZMK_SPLIT_PERIPHERAL_STATUS_REPORTING)
++    subscribed = subscribed && slot->peripheral_status_handle;
++#endif // IS_ENABLED(CONFIG_ZMK_SPLIT_PERIPHERAL_STATUS_REPORTING)
+ #if IS_ENABLED(CONFIG_ZMK_SPLIT_BLE_CENTRAL_BATTERY_LEVEL_FETCHING)
+     subscribed = subscribed && slot->batt_lvl_subscribe_params.value_handle;
+ #endif /* IS_ENABLED(CONFIG_ZMK_SPLIT_BLE_CENTRAL_BATTERY_LEVEL_FETCHING) */
+@@ -1093,6 +1124,27 @@ void split_central_split_run_callback(struct k_work *work) {
+             }
+             break;
+ #endif // IS_ENABLED(CONFIG_ZMK_SPLIT_PERIPHERAL_HID_INDICATORS)
++#if IS_ENABLED(CONFIG_ZMK_SPLIT_PERIPHERAL_STATUS_REPORTING)
++        case ZMK_SPLIT_TRANSPORT_CENTRAL_CMD_TYPE_SET_PERIPHERAL_STATUS: {
++            if (peripherals[payload_wrapper.source].peripheral_status_handle == 0) {
++                // The peripheral can be considered connected before its GATT
++                // characteristics have been discovered; discovery submits its own
++                // broadcast, so dropping this one loses nothing.
++                break;
++            }
++
++            int status_err = bt_gatt_write_without_response(
++                peripherals[payload_wrapper.source].conn,
++                peripherals[payload_wrapper.source].peripheral_status_handle,
++                &payload_wrapper.cmd.data.set_peripheral_status,
++                sizeof(payload_wrapper.cmd.data.set_peripheral_status), true);
++
++            if (status_err) {
++                LOG_ERR("Failed to write peripheral status characteristic (err %d)", status_err);
++            }
++            break;
++        }
++#endif // IS_ENABLED(CONFIG_ZMK_SPLIT_PERIPHERAL_STATUS_REPORTING)
+         default:
+             LOG_WRN("Unsupported wrapped central command type %d", payload_wrapper.cmd.type);
+             return;
+@@ -1174,6 +1226,9 @@ static int split_central_bt_send_command(uint8_t source,
+     }
+ 
+     switch (cmd.type) {
++#if IS_ENABLED(CONFIG_ZMK_SPLIT_PERIPHERAL_STATUS_REPORTING)
++    case ZMK_SPLIT_TRANSPORT_CENTRAL_CMD_TYPE_SET_PERIPHERAL_STATUS:
++#endif // IS_ENABLED(CONFIG_ZMK_SPLIT_PERIPHERAL_STATUS_REPORTING)
+     case ZMK_SPLIT_TRANSPORT_CENTRAL_CMD_TYPE_SET_HID_INDICATORS:
+     case ZMK_SPLIT_TRANSPORT_CENTRAL_CMD_TYPE_SET_PHYSICAL_LAYOUT:
+     case ZMK_SPLIT_TRANSPORT_CENTRAL_CMD_TYPE_INVOKE_BEHAVIOR: {
+diff --git a/app/src/split/bluetooth/service.c b/app/src/split/bluetooth/service.c
+index a51e8c30..b6291d31 100644
+--- a/app/src/split/bluetooth/service.c
++++ b/app/src/split/bluetooth/service.c
+@@ -31,6 +31,9 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
+ #if IS_ENABLED(CONFIG_ZMK_SPLIT_PERIPHERAL_HID_INDICATORS)
+ #include <zmk/events/hid_indicators_changed.h>
+ #endif // IS_ENABLED(CONFIG_ZMK_SPLIT_PERIPHERAL_HID_INDICATORS)
++#if IS_ENABLED(CONFIG_ZMK_SPLIT_PERIPHERAL_STATUS_REPORTING)
++#include <zmk/events/split_peripheral_status_data_changed.h>
++#endif // IS_ENABLED(CONFIG_ZMK_SPLIT_PERIPHERAL_STATUS_REPORTING)
+ 
+ #include <zmk/events/sensor_event.h>
+ #include <zmk/sensors.h>
+@@ -103,6 +106,43 @@ static ssize_t split_svc_update_indicators(struct bt_conn *conn, const struct bt
+ 
+ #endif // IS_ENABLED(CONFIG_ZMK_SPLIT_PERIPHERAL_HID_INDICATORS)
+ 
++#if IS_ENABLED(CONFIG_ZMK_SPLIT_PERIPHERAL_STATUS_REPORTING)
++
++static struct zmk_split_peripheral_status_data_changed peripheral_status = {0};
++
++static void split_svc_peripheral_status_callback(struct k_work *work) {
++    raise_zmk_split_peripheral_status_data_changed(peripheral_status);
++}
++
++static K_WORK_DEFINE(split_svc_peripheral_status_work, split_svc_peripheral_status_callback);
++
++static ssize_t split_svc_peripheral_status(struct bt_conn *conn, const struct bt_gatt_attr *attr,
++                                           const void *buf, uint16_t len, uint16_t offset,
++                                           uint8_t flags) {
++    // The payload is fixed size and written whole; a short or offset write would leave
++    // the struct half updated.
++    if (offset != 0 || len != sizeof(struct zmk_split_peripheral_status_payload)) {
++        return BT_GATT_ERR(BT_ATT_ERR_INVALID_ATTRIBUTE_LEN);
++    }
++
++    const struct zmk_split_peripheral_status_payload *payload = buf;
++
++    peripheral_status.source = payload->source;
++    peripheral_status.layer_index = payload->layer_index;
++    peripheral_status.endpoint_transport = payload->endpoint_transport;
++    peripheral_status.active_profile_index = payload->active_profile_index;
++    peripheral_status.profile_flags = payload->profile_flags;
++    peripheral_status.wpm = payload->wpm;
++    memcpy(peripheral_status.battery_levels, payload->battery_levels,
++           sizeof(peripheral_status.battery_levels));
++
++    k_work_submit(&split_svc_peripheral_status_work);
++
++    return len;
++}
++
++#endif // IS_ENABLED(CONFIG_ZMK_SPLIT_PERIPHERAL_STATUS_REPORTING)
++
+ static uint8_t selected_phys_layout = 0;
+ 
+ static void split_svc_select_phys_layout_callback(struct k_work *work) {
+@@ -201,6 +241,11 @@ BT_GATT_SERVICE_DEFINE(
+                                BT_GATT_CHRC_WRITE_WITHOUT_RESP, BT_GATT_PERM_WRITE_ENCRYPT, NULL,
+                                split_svc_update_indicators, NULL),
+ #endif // IS_ENABLED(CONFIG_ZMK_SPLIT_PERIPHERAL_HID_INDICATORS)
++#if IS_ENABLED(CONFIG_ZMK_SPLIT_PERIPHERAL_STATUS_REPORTING)
++        BT_GATT_CHARACTERISTIC(BT_UUID_DECLARE_128(ZMK_SPLIT_BT_PERIPHERAL_STATUS_UUID),
++                               BT_GATT_CHRC_WRITE_WITHOUT_RESP, BT_GATT_PERM_WRITE_ENCRYPT, NULL,
++                               split_svc_peripheral_status, NULL),
++#endif // IS_ENABLED(CONFIG_ZMK_SPLIT_PERIPHERAL_STATUS_REPORTING)
+     BT_GATT_CHARACTERISTIC(BT_UUID_DECLARE_128(ZMK_SPLIT_BT_SELECT_PHYS_LAYOUT_UUID),
+                            BT_GATT_CHRC_WRITE | BT_GATT_CHRC_READ,
+                            BT_GATT_PERM_WRITE_ENCRYPT | BT_GATT_PERM_READ_ENCRYPT,
+diff --git a/app/src/split/central.c b/app/src/split/central.c
+index e2b80643..9949c5e5 100644
+--- a/app/src/split/central.c
++++ b/app/src/split/central.c
+@@ -6,6 +6,8 @@
+ 
+ #include <errno.h>
+ 
++#include <zephyr/init.h>
++
+ #include <zmk/stdlib.h>
+ #include <zmk/split/transport/central.h>
+ #include <zmk/split/central.h>
+@@ -19,6 +21,19 @@
+ #include <zmk/events/position_state_changed.h>
+ #include <zmk/events/sensor_event.h>
+ 
++#if IS_ENABLED(CONFIG_ZMK_SPLIT_PERIPHERAL_STATUS_REPORTING)
++#include <zmk/ble.h>
++#include <zmk/endpoints.h>
++#include <zmk/events/ble_active_profile_changed.h>
++#include <zmk/events/endpoint_changed.h>
++#include <zmk/events/layer_state_changed.h>
++#include <zmk/keymap.h>
++#include <zmk/workqueue.h>
++#if IS_ENABLED(CONFIG_ZMK_WPM)
++#include <zmk/wpm.h>
++#endif
++#endif // IS_ENABLED(CONFIG_ZMK_SPLIT_PERIPHERAL_STATUS_REPORTING)
++
+ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
+ 
+ const struct zmk_split_transport_central *active_transport;
+@@ -150,6 +165,107 @@ int zmk_split_central_update_hid_indicator(zmk_hid_indicators_t indicators) {
+ 
+ #endif // IS_ENABLED(CONFIG_ZMK_SPLIT_PERIPHERAL_HID_INDICATORS)
+ 
++#if IS_ENABLED(CONFIG_ZMK_SPLIT_PERIPHERAL_STATUS_REPORTING)
++
++int zmk_split_central_broadcast_peripheral_status(void) {
++    if (!active_transport || !active_transport->api ||
++        !active_transport->api->get_available_source_ids || !active_transport->api->send_command) {
++        return -ENODEV;
++    }
++
++    uint8_t source_ids[ZMK_SPLIT_CENTRAL_PERIPHERAL_COUNT];
++
++    int ret = active_transport->api->get_available_source_ids(source_ids);
++    if (ret < 0) {
++        return ret;
++    }
++
++    const size_t available = (size_t)ret;
++
++    struct zmk_split_transport_central_command command =
++        (struct zmk_split_transport_central_command){
++            .type = ZMK_SPLIT_TRANSPORT_CENTRAL_CMD_TYPE_SET_PERIPHERAL_STATUS,
++            .data = {.set_peripheral_status = {
++                         .layer_index = zmk_keymap_highest_layer_active(),
++                         .endpoint_transport = zmk_endpoint_get_selected().transport,
++                     }},
++        };
++
++#if IS_ENABLED(CONFIG_ZMK_BLE)
++    command.data.set_peripheral_status.active_profile_index = zmk_ble_active_profile_index();
++    if (zmk_ble_active_profile_is_connected()) {
++        command.data.set_peripheral_status.profile_flags |= ZMK_SPLIT_STATUS_PROFILE_CONNECTED;
++    }
++    if (!zmk_ble_active_profile_is_open()) {
++        command.data.set_peripheral_status.profile_flags |= ZMK_SPLIT_STATUS_PROFILE_BONDED;
++    }
++#endif // IS_ENABLED(CONFIG_ZMK_BLE)
++
++#if IS_ENABLED(CONFIG_ZMK_WPM)
++    command.data.set_peripheral_status.wpm = (uint8_t)CLAMP(zmk_wpm_get_state(), 0, UINT8_MAX);
++#endif // IS_ENABLED(CONFIG_ZMK_WPM)
++
++#if IS_ENABLED(CONFIG_ZMK_SPLIT_BLE_CENTRAL_BATTERY_LEVEL_FETCHING)
++    // peripheral_battery_levels is sized by the (config dependent) peripheral count, the
++    // payload by the fixed wire constant. Copy whichever is smaller and leave the rest zeroed.
++    const size_t battery_count =
++        MIN(ARRAY_SIZE(peripheral_battery_levels), ZMK_SPLIT_STATUS_MAX_PERIPHERALS);
++    memcpy(command.data.set_peripheral_status.battery_levels, peripheral_battery_levels,
++           battery_count);
++#endif // IS_ENABLED(CONFIG_ZMK_SPLIT_BLE_CENTRAL_BATTERY_LEVEL_FETCHING)
++
++    for (size_t i = 0; i < available; i++) {
++        // get_available_source_ids only returns connected peripherals, so the array index
++        // is not the source id. Tell each peripheral its own id, so it can pick its own
++        // entry out of battery_levels.
++        command.data.set_peripheral_status.source = source_ids[i];
++
++        int send_ret = active_transport->api->send_command(source_ids[i], command);
++        if (send_ret < 0) {
++            LOG_WRN("Failed to send status to peripheral %d (%d)", source_ids[i], send_ret);
++            ret = send_ret;
++        }
++    }
++
++    return ret < 0 ? ret : 0;
++}
++
++static void peripheral_status_broadcast_work_cb(struct k_work *work) {
++    zmk_split_central_broadcast_peripheral_status();
++
++    struct k_work_delayable *dwork = k_work_delayable_from_work(work);
++    k_work_schedule_for_queue(zmk_workqueue_lowprio_work_q(), dwork,
++                              K_SECONDS(CONFIG_ZMK_SPLIT_PERIPHERAL_STATUS_INTERVAL_S));
++}
++
++static K_WORK_DELAYABLE_DEFINE(peripheral_status_broadcast_work,
++                               peripheral_status_broadcast_work_cb);
++
++// Battery levels and WPM ride the periodic tick rather than their own events: WPM changes
++// once a second, and a BLE write plus an ePaper refresh at that rate is not worth it.
++static int peripheral_status_broadcast_init(void) {
++    k_work_schedule_for_queue(zmk_workqueue_lowprio_work_q(), &peripheral_status_broadcast_work,
++                              K_SECONDS(CONFIG_ZMK_SPLIT_PERIPHERAL_STATUS_INTERVAL_S));
++    return 0;
++}
++
++SYS_INIT(peripheral_status_broadcast_init, APPLICATION, CONFIG_APPLICATION_INIT_PRIORITY);
++
++// Layer and endpoint changes are pushed immediately; they have to feel instant.
++static int peripheral_status_listener_cb(const zmk_event_t *eh) {
++    zmk_split_central_broadcast_peripheral_status();
++    return ZMK_EV_EVENT_BUBBLE;
++}
++
++ZMK_LISTENER(peripheral_status_listener, peripheral_status_listener_cb);
++ZMK_SUBSCRIPTION(peripheral_status_listener, zmk_layer_state_changed);
++ZMK_SUBSCRIPTION(peripheral_status_listener, zmk_endpoint_changed);
++#if IS_ENABLED(CONFIG_ZMK_BLE)
++ZMK_SUBSCRIPTION(peripheral_status_listener, zmk_ble_active_profile_changed);
++#endif
++
++#endif // IS_ENABLED(CONFIG_ZMK_SPLIT_PERIPHERAL_STATUS_REPORTING)
++
+ #if IS_ENABLED(CONFIG_ZMK_SPLIT_BLE_CENTRAL_BATTERY_LEVEL_FETCHING)
+ 
+ int zmk_split_central_get_peripheral_battery_level(uint8_t source, uint8_t *level) {
+diff --git a/app/src/split/peripheral.c b/app/src/split/peripheral.c
+index b814df61..ca78ecd1 100644
+--- a/app/src/split/peripheral.c
++++ b/app/src/split/peripheral.c
+@@ -22,6 +22,10 @@
+ #include <zmk/events/hid_indicators_changed.h>
+ #endif
+ 
++#if IS_ENABLED(CONFIG_ZMK_SPLIT_PERIPHERAL_STATUS_REPORTING)
++#include <zmk/events/split_peripheral_status_data_changed.h>
++#endif
++
+ #include <zephyr/init.h>
+ #include <zephyr/logging/log.h>
+ 
+@@ -65,6 +69,21 @@ int zmk_split_transport_peripheral_command_handler(
+         return raise_zmk_hid_indicators_changed((struct zmk_hid_indicators_changed){
+             .indicators = cmd.data.set_hid_indicators.indicators});
+     }
++#endif
++#if IS_ENABLED(CONFIG_ZMK_SPLIT_PERIPHERAL_STATUS_REPORTING)
++    case ZMK_SPLIT_TRANSPORT_CENTRAL_CMD_TYPE_SET_PERIPHERAL_STATUS: {
++        struct zmk_split_peripheral_status_data_changed ev = {
++            .source = cmd.data.set_peripheral_status.source,
++            .layer_index = cmd.data.set_peripheral_status.layer_index,
++            .endpoint_transport = cmd.data.set_peripheral_status.endpoint_transport,
++            .active_profile_index = cmd.data.set_peripheral_status.active_profile_index,
++            .profile_flags = cmd.data.set_peripheral_status.profile_flags,
++            .wpm = cmd.data.set_peripheral_status.wpm,
++        };
++        memcpy(ev.battery_levels, cmd.data.set_peripheral_status.battery_levels,
++               sizeof(ev.battery_levels));
++        return raise_zmk_split_peripheral_status_data_changed(ev);
++    }
+ #endif
+     default:
+         LOG_WRN("Unhandled command type %d", cmd.type);
+diff --git a/app/src/split/wired/central.c b/app/src/split/wired/central.c
+index 0354e52d..29bf1c2f 100644
+--- a/app/src/split/wired/central.c
++++ b/app/src/split/wired/central.c
+@@ -185,6 +185,8 @@ static ssize_t get_payload_data_size(const struct zmk_split_transport_central_co
+         return sizeof(cmd->data.set_physical_layout);
+     case ZMK_SPLIT_TRANSPORT_CENTRAL_CMD_TYPE_SET_HID_INDICATORS:
+         return sizeof(cmd->data.set_hid_indicators);
++    case ZMK_SPLIT_TRANSPORT_CENTRAL_CMD_TYPE_SET_PERIPHERAL_STATUS:
++        return sizeof(cmd->data.set_peripheral_status);
+     default:
+         return -ENOTSUP;
+     }
+-- 
+2.55.0
+
