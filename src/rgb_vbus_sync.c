@@ -32,13 +32,39 @@ LOG_MODULE_REGISTER(rgb_vbus_sync, CONFIG_ZMK_LOG_LEVEL);
 /* UNDERGLOW_EFFECT_SWIRL: hue spread across the LED chain, i.e. a rainbow. */
 #define RAINBOW_EFFECT 3
 
+/* Wanted brightness as a percentage of full output. The driver scales the
+ * stored brightness against CONFIG_ZMK_RGB_UNDERGLOW_BRT_MAX (see
+ * hsb_scale_min_max in rgb_underglow.c), so undo that scaling here to keep
+ * this number meaning what it says. */
+#define RAINBOW_BRIGHTNESS_PERCENT 15
+#define RAINBOW_BRIGHTNESS_VALUE                                                                   \
+    (RAINBOW_BRIGHTNESS_PERCENT * 100 / CONFIG_ZMK_RGB_UNDERGLOW_BRT_MAX)
+
+BUILD_ASSERT(CONFIG_ZMK_RGB_UNDERGLOW_BRT_MIN == 0,
+             "Brightness scaling below assumes a minimum brightness of 0");
+BUILD_ASSERT(RAINBOW_BRIGHTNESS_VALUE <= 100,
+             "CONFIG_ZMK_RGB_UNDERGLOW_BRT_MAX is too low to reach the wanted brightness");
+
 /* Delay before the first sync, so the underglow driver, the settings
  * subsystem and the USB stack have all finished initialising. */
 #define INITIAL_SYNC_DELAY K_SECONDS(2)
 #define POLL_INTERVAL K_SECONDS(1)
 
 static int last_power_state = -1;
-static bool effect_selected;
+static bool appearance_applied;
+
+/* Applied once per boot, so a stored brightness or effect from a previous
+ * session cannot leave the underglow looking different after a reboot. */
+static void apply_appearance(void) {
+    struct zmk_led_hsb color = {
+        .h = CONFIG_ZMK_RGB_UNDERGLOW_HUE_START,
+        .s = CONFIG_ZMK_RGB_UNDERGLOW_SAT_START,
+        .b = RAINBOW_BRIGHTNESS_VALUE,
+    };
+
+    zmk_rgb_underglow_set_hsb(color);
+    zmk_rgb_underglow_select_effect(RAINBOW_EFFECT);
+}
 
 static void rgb_vbus_sync_work_handler(struct k_work *work) {
     int powered = zmk_usb_is_powered() ? 1 : 0;
@@ -47,9 +73,9 @@ static void rgb_vbus_sync_work_handler(struct k_work *work) {
         last_power_state = powered;
 
         if (powered) {
-            if (!effect_selected) {
-                zmk_rgb_underglow_select_effect(RAINBOW_EFFECT);
-                effect_selected = true;
+            if (!appearance_applied) {
+                apply_appearance();
+                appearance_applied = true;
             }
             LOG_INF("Cable connected, enabling RGB underglow");
             zmk_rgb_underglow_on();
