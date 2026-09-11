@@ -1,0 +1,21 @@
+services:
+  build:
+    build:
+      context: .
+      args:
+        REFRESH: "${REFRESH:-0}"
+    image: zmk-halcyon-build
+    volumes:
+      # The repo is passed to CMake as -DZMK_EXTRA_MODULES, exactly like CI does when
+      # zephyr/module.yml is present at the repo root.
+      - .:/workspace
+      - ./firmware:/workspace/firmware
+      # Per-board CMake caches, so repeat builds are incremental.
+      - zmk-build:/west/build
+    environment:
+      HOST_UID: "${UID:-1000}"
+      HOST_GID: "${GID:-1000}"
+    working_dir: /west
+
+volumes:
+  zmk-build:

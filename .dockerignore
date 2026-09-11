@@ -1,0 +1,5 @@
+# The build context only needs config/west.yml and the entrypoint script; the repo
+# itself is bind-mounted at run time.
+*
+!config/west.yml
+!docker/build-firmware.sh
