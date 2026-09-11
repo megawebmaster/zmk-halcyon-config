@@ -19,7 +19,7 @@
 static const LV_ATTRIBUTE_MEM_ALIGN LV_ATTRIBUTE_LARGE_CONST LV_ATTRIBUTE_FOREST uint8_t
     Forest_map[] = {
 
-#if CONFIG_HALCYON_EPAPER_WIDGET_INVERTED
+#if CONFIG_HLC_EPAPER_WIDGET_INVERTED
         0xff, 0xff, 0xff, 0xff, // white
         0x00, 0x00, 0x00, 0xff, // black
 #else
