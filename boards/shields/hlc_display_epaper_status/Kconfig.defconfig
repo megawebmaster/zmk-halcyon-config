@@ -37,11 +37,8 @@ config ZMK_DISPLAY_STATUS_SCREEN_CUSTOM
     imply HLC_EPAPER_WIDGET_STATUS
 
 config HLC_EPAPER_WIDGET_STATUS
-    bool "Halcyon epaper status widget with layer, batteries and WPM"
+    bool "Halcyon epaper status widget with batteries, artwork and WPM"
     select LV_FONT_MONTSERRAT_16
-    # The layer number is drawn at the largest built-in Montserrat size. A true 4x of
-    # the 14px upstream layer text would be 56, which LVGL does not ship.
-    select LV_FONT_MONTSERRAT_48
     select LV_USE_IMAGE
     select LV_USE_CANVAS
 

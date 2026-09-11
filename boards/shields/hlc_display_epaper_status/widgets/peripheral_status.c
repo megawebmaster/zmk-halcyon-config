@@ -32,8 +32,7 @@ struct peripheral_status_state {
 };
 
 #define CANVAS_STATUS 0
-#define CANVAS_LAYER 1
-#define CANVAS_WPM 3
+#define CANVAS_WPM 2
 
 // --- This half's own battery, read locally -----------------------------------------
 
@@ -78,7 +77,11 @@ static struct peripheral_status_state get_state(const zmk_event_t *_eh) {
 
 static void set_connection_status(struct zmk_widget_status *widget,
                                   struct peripheral_status_state state) {
-    widget->state.connected = state.connected;
+    if (widget->state.split_connected == state.connected) {
+        return;
+    }
+
+    widget->state.split_connected = state.connected;
 
     draw_status_row(lv_obj_get_child(widget->obj, CANVAS_STATUS), &widget->state);
 }
@@ -114,26 +117,13 @@ static void set_central_status(struct zmk_widget_status *widget,
         }
     }
 
-    widget->state.selected_endpoint.transport = state.endpoint_transport;
-    widget->state.active_profile_connected =
-        (state.profile_flags & ZMK_SPLIT_STATUS_PROFILE_CONNECTED) != 0;
-    widget->state.active_profile_bonded =
-        (state.profile_flags & ZMK_SPLIT_STATUS_PROFILE_BONDED) != 0;
-    widget->state.layer_index = state.layer_index;
     widget->state.wpm_value = state.wpm;
 
     // This arrives on a timer as well as on change, so repaint only what moved:
     // refreshing an unchanged ePaper row costs a visible flicker for nothing.
     if (prev.peer_battery != widget->state.peer_battery ||
-        prev.peer_battery_valid != widget->state.peer_battery_valid ||
-        prev.selected_endpoint.transport != widget->state.selected_endpoint.transport ||
-        prev.active_profile_connected != widget->state.active_profile_connected ||
-        prev.active_profile_bonded != widget->state.active_profile_bonded) {
+        prev.peer_battery_valid != widget->state.peer_battery_valid) {
         draw_status_row(lv_obj_get_child(widget->obj, CANVAS_STATUS), &widget->state);
-    }
-
-    if (prev.layer_index != widget->state.layer_index) {
-        draw_layer_row(lv_obj_get_child(widget->obj, CANVAS_LAYER), &widget->state);
     }
 
     if (prev.wpm_value != widget->state.wpm_value) {
@@ -169,10 +159,6 @@ int zmk_widget_status_init(struct zmk_widget_status *widget, lv_obj_t *parent) {
     lv_obj_align(status, LV_ALIGN_TOP_LEFT, ROW_STATUS_Y, 0);
     lv_canvas_set_buffer(status, widget->cbuf, CANVAS_SIZE, CANVAS_SIZE, CANVAS_COLOR_FORMAT);
 
-    lv_obj_t *layer = lv_canvas_create(widget->obj);
-    lv_obj_align(layer, LV_ALIGN_TOP_LEFT, ROW_LAYER_Y, 0);
-    lv_canvas_set_buffer(layer, widget->cbuf2, CANVAS_SIZE, CANVAS_SIZE, CANVAS_COLOR_FORMAT);
-
     // The art is clipped by the right edge of the widget and then again by the WPM
     // canvas, which is a later child and so paints over it. Only its top shows.
     lv_obj_t *art = lv_img_create(widget->obj);
@@ -181,12 +167,11 @@ int zmk_widget_status_init(struct zmk_widget_status *widget, lv_obj_t *parent) {
 
     lv_obj_t *wpm = lv_canvas_create(widget->obj);
     lv_obj_align(wpm, LV_ALIGN_TOP_LEFT, ROW_WPM_Y, 0);
-    lv_canvas_set_buffer(wpm, widget->cbuf3, CANVAS_SIZE, CANVAS_SIZE, CANVAS_COLOR_FORMAT);
+    lv_canvas_set_buffer(wpm, widget->cbuf2, CANVAS_SIZE, CANVAS_SIZE, CANVAS_COLOR_FORMAT);
 
     // Paint every row once: the listeners below only repaint what changed, so a row
     // whose first event carries the zero state would otherwise stay uninitialised.
     draw_status_row(status, &widget->state);
-    draw_layer_row(layer, &widget->state);
     draw_wpm_row(wpm, &widget->state);
 
     sys_slist_append(&widgets, &widget->node);

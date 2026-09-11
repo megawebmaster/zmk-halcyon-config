@@ -36,18 +36,19 @@ struct status_state {
     uint8_t peer_battery;
     bool peer_battery_valid;
 
+#if IS_ENABLED(CONFIG_ZMK_SPLIT) && !IS_ENABLED(CONFIG_ZMK_SPLIT_ROLE_CENTRAL)
+    // A peripheral has no host endpoint of its own, so its connection symbol shows the
+    // BLE link to the central. It also means everything forwarded above is fresh: while
+    // the link is down the central's last values are stale.
+    bool split_connected;
+#else
+    // The central's link to the host, which is what its connection symbol shows.
     struct zmk_endpoint_instance selected_endpoint;
     bool active_profile_connected;
     bool active_profile_bonded;
-
-    uint8_t layer_index;
-    uint8_t wpm_value;
-
-#if IS_ENABLED(CONFIG_ZMK_SPLIT) && !IS_ENABLED(CONFIG_ZMK_SPLIT_ROLE_CENTRAL)
-    // Whether this peripheral is linked to the central at all. Everything above is
-    // forwarded from the central and is meaningless while this is false.
-    bool connected;
 #endif
+
+    uint8_t wpm_value;
 };
 
 struct battery_status_state {
@@ -63,15 +64,18 @@ struct battery_status_state {
 // width, canvas y runs down from wherever the canvas is aligned on the screen.
 //
 //   y   0 -  15   status row: own battery, connection symbol, other half's battery
-//   y  20 -  77   layer number
-//   y  84 - 167   artwork (clipped: the widget ends at 184, so only the top of it shows)
-//   y 168 - 183   WPM row
+//   y  16 -  20   gap (the status canvas background extends this far)
+//   y  21 - 162   artwork (clipped: the WPM canvas starts at 163, so only its top shows)
+//   y 163 - 167   gap (the WPM canvas background extends this far)
+//   y 168 - 183   WPM row (drawn WPM_TEXT_Y down from the top of its canvas)
 //
 // Children are added in that order so each one paints over the tail of the one before.
 #define ROW_STATUS_Y 0
-#define ROW_LAYER_Y 20
-#define ROW_ART_Y 84
-#define ROW_WPM_Y 168
+#define ROW_ART_Y 21
+#define ROW_WPM_Y 163
+
+// The WPM canvas starts 5px early so its background paints the gap below the artwork.
+#define WPM_TEXT_Y 5
 
 // Status row: two batteries with at least 5px clear either side of the symbol.
 #define STATUS_BATTERY_LEFT_X 0
@@ -84,7 +88,6 @@ void rotate_canvas(lv_obj_t *canvas);
 // Shared row painters, so the central and peripheral variants of the widget cannot
 // drift apart visually.
 void draw_status_row(lv_obj_t *canvas, const struct status_state *state);
-void draw_layer_row(lv_obj_t *canvas, const struct status_state *state);
 void draw_wpm_row(lv_obj_t *canvas, const struct status_state *state);
 void draw_battery_at(lv_obj_t *canvas, lv_coord_t x, lv_coord_t y, uint8_t level, bool charging);
 void init_label_dsc(lv_draw_label_dsc_t *label_dsc, lv_color_t color, const lv_font_t *font,

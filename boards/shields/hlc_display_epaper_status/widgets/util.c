@@ -134,15 +134,17 @@ void canvas_draw_img(lv_obj_t *canvas, lv_coord_t x, lv_coord_t y, const lv_imag
     lv_canvas_finish_layer(canvas, &layer);
 }
 
-static const char *connection_symbol(const struct status_state *state) {
 #if IS_ENABLED(CONFIG_ZMK_SPLIT) && !IS_ENABLED(CONFIG_ZMK_SPLIT_ROLE_CENTRAL)
-    // Everything forwarded from the central is stale the moment the link drops, so a
-    // disconnected peripheral says so rather than showing the central's last endpoint.
-    if (!state->connected) {
-        return LV_SYMBOL_CLOSE;
-    }
-#endif
 
+// The halves only ever talk to each other over BLE, so a live split link is a wireless
+// link. This says nothing about how the central reaches the host.
+static const char *connection_symbol(const struct status_state *state) {
+    return state->split_connected ? LV_SYMBOL_WIFI : LV_SYMBOL_CLOSE;
+}
+
+#else
+
+static const char *connection_symbol(const struct status_state *state) {
     switch (state->selected_endpoint.transport) {
     case ZMK_TRANSPORT_USB:
         return LV_SYMBOL_USB;
@@ -156,6 +158,8 @@ static const char *connection_symbol(const struct status_state *state) {
         return LV_SYMBOL_CLOSE;
     }
 }
+
+#endif
 
 void draw_status_row(lv_obj_t *canvas, const struct status_state *state) {
     lv_draw_label_dsc_t label_dsc;
@@ -176,19 +180,6 @@ void draw_status_row(lv_obj_t *canvas, const struct status_state *state) {
     rotate_canvas(canvas);
 }
 
-void draw_layer_row(lv_obj_t *canvas, const struct status_state *state) {
-    lv_draw_label_dsc_t label_dsc;
-    init_label_dsc(&label_dsc, LVGL_FOREGROUND, &lv_font_montserrat_48, LV_TEXT_ALIGN_CENTER);
-
-    lv_canvas_fill_bg(canvas, LVGL_BACKGROUND, LV_OPA_COVER);
-
-    char text[4];
-    snprintf(text, sizeof(text), "%d", state->layer_index);
-    canvas_draw_text(canvas, 0, 0, CANVAS_SIZE, &label_dsc, text);
-
-    rotate_canvas(canvas);
-}
-
 void draw_wpm_row(lv_obj_t *canvas, const struct status_state *state) {
     lv_draw_label_dsc_t label_dsc;
     init_label_dsc(&label_dsc, LVGL_FOREGROUND, &lv_font_montserrat_16, LV_TEXT_ALIGN_CENTER);
@@ -197,7 +188,7 @@ void draw_wpm_row(lv_obj_t *canvas, const struct status_state *state) {
 
     char text[12];
     snprintf(text, sizeof(text), "WPM: %d", state->wpm_value);
-    canvas_draw_text(canvas, 0, 0, CANVAS_SIZE, &label_dsc, text);
+    canvas_draw_text(canvas, 0, WPM_TEXT_Y, CANVAS_SIZE, &label_dsc, text);
 
     rotate_canvas(canvas);
 }
