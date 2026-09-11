@@ -1,0 +1,6 @@
+{
+  "includeIgnored": [
+    ".zmk/zmk/",
+    ".zmk/zmk-halcyon-module/"
+  ]
+}
